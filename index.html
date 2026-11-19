@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>身體數據計算與營養素攝取</title>
+<style>
+body { font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 12px; line-height: 1.8; }
+input, select, button { font-size: 16px; margin: 3px 0; padding: 6px; }
+button { background: #2f7d5b; color: white; border: 0; border-radius: 6px; }
+.item { border-top: 1px solid #ccc; padding: 4px 0; }
+.bar { background: #ddd; height: 8px; border-radius: 4px; }
+.bar div { background: #2f7d5b; height: 100%; border-radius: 4px; }
+.bar div.over { background: #d9534f; }
+</style>
+</head>
+<body>
+<h2>身體數據計算與營養素攝取</h2>
+
+<h3>1. 身體數據</h3>
+性別：<select id="sex"><option>男</option><option>女</option></select><br>
+年齡：<input id="age" type="number" value="20"><br>
+身高(cm)：<input id="h" type="number" value="170"><br>
+體重(kg)：<input id="w" type="number" value="60"><br>
+活動量：
+<select id="act">
+  <option value="1.2">久坐</option>
+  <option value="1.375">輕度</option>
+  <option value="1.55">中度</option>
+  <option value="1.725">高度</option>
+</select><br>
+<button id="calc">計算每日目標</button>
+<p id="result"></p>
+
+<h3>2. 拍照分析餐點</h3>
+Gemini 金鑰：<input id="key" type="password" placeholder="貼上你的金鑰"><br>
+<input id="photo" type="file" accept="image/*"><br>
+<img id="preview" style="max-width:100%;max-height:200px;display:none">
+<p id="status"></p>
+<div id="aiResult"></div>
+
+<h3>3. 今日攝取 vs 目標</h3>
+<div id="log"></div>
+<div id="summary"></div>
+
+<script>
+let goal = null;
+let current = null;
+let log = [];
+
+document.getElementById("calc").onclick = function () {
+  let w = parseFloat(document.getElementById("w").value);
+  let h = parseFloat(document.getElementById("h").value);
+  let age = parseFloat(document.getElementById("age").value);
+  let sex = document.getElementById("sex").value;
+  let factor = parseFloat(document.getElementById("act").value);
+
+  let bmi = w / ((h / 100) * (h / 100));
+  let bmiText = "";
+  if (bmi < 18.5) {
+    bmiText = "體重過輕";
+  } else if (bmi < 25) {
+    bmiText = "體重正常";
+  } else {
+    bmiText = "體重過重";
+  }
+
+  let bmr = 0;
+  if (sex === "男") {
+    bmr = 10 * w + 6.25 * h - 5 * age + 5;
+  } else {
+    bmr = 10 * w + 6.25 * h - 5 * age - 161;
+  }
+
+  let tdee = bmr * factor;
+  goal = {
+    kcal: tdee,
+    carb: tdee * 0.5 / 4,
+    protein: tdee * 0.2 / 4,
+    fat: tdee * 0.3 / 9,
+    water: w * 35
+  };
+
+  document.getElementById("result").innerHTML =
+    "BMI：" + bmi.toFixed(1) + "（" + bmiText + "）<br>" +
+    "BMR：" + Math.round(bmr) + " 大卡<br>" +
+    "每日熱量：" + Math.round(tdee) + " 大卡<br>" +
+    "碳水：" + Math.round(goal.carb) + " g　蛋白質：" + Math.round(goal.protein) +
+    " g　脂肪：" + Math.round(goal.fat) + " g<br>" +
+    "每日飲水量：" + Math.round(goal.water) + " ml";
+
+  showSummary();
+};
+
+document.getElementById("photo").onchange = function () {
+  let file = this.files[0];
+  if (file) {
+    analyze(file);
+  }
+};
+
+function shrink(file) {
+  return new Promise(function (resolve) {
+    let img = new Image();
+    img.onload = function () {
+      let scale = Math.min(1, 1024 / Math.max(img.width, img.height));
+      let canvas = document.createElement("canvas");
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function analyze(file) {
+  let key = document.getElementById("key").value.trim();
+  let status = document.getElementById("status");
+  if (key === "") {
+    status.textContent = "請先貼上 Gemini 金鑰";
+    return;
+  }
+
+  status.textContent = "分析中…";
+  document.getElementById("aiResult").innerHTML = "";
+
+  try {
+    let dataUrl = await shrink(file);
+    let preview = document.getElementById("preview");
+    preview.src = dataUrl;
+    preview.style.display = "block";
+    let base64 = dataUrl.split(",")[1];
+
+    let prompt =
+      "辨識這張餐點照片中的每一項食物，以台灣常見份量估算。" +
+      "只回傳 JSON，格式：" +
+      '{"items":[{"name":"品項","portion":"份量","kcal":數字,"protein":數字,"fat":數字,"carb":數字}]}' +
+      "蛋白質、脂肪、碳水單位為公克，熱量為大卡。若不是食物，items 為空陣列。";
+
+    let url = "https://generativelanguage.googleapis.com/v1beta/models/" +
+              "gemini-2.5-flash:generateContent?key=" + key;
+
+    let response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: "image/jpeg", data: base64 } }
+          ]
+        }],
+        generationConfig: { responseMimeType: "application/json" }
+      })
+    });
+
+    let data = await response.json();
+    if (!response.ok) {
+      status.textContent = "錯誤：" + (data.error ? data.error.message : response.status);
+      return;
+    }
+
+    let text = data.candidates[0].content.parts[0].text;
+    current = JSON.parse(text).items;
+
+    if (!current || current.length === 0) {
+      status.textContent = "沒有辨識到食物，請換一張照片";
+      return;
+    }
+    status.textContent = "";
+    showAI();
+  } catch (e) {
+    status.textContent = "分析失敗：" + e.message;
+  }
+}
+
+function total(list) {
+  let t = { kcal: 0, protein: 0, fat: 0, carb: 0 };
+  for (let i = 0; i < list.length; i++) {
+    t.kcal += Number(list[i].kcal) || 0;
+    t.protein += Number(list[i].protein) || 0;
+    t.fat += Number(list[i].fat) || 0;
+    t.carb += Number(list[i].carb) || 0;
+  }
+  return t;
+}
+
+function showAI() {
+  let html = "";
+  for (let i = 0; i < current.length; i++) {
+    html += '<div class="item">' + current[i].name + "（" + current[i].portion +
+            "）：" + Math.round(current[i].kcal) + " 大卡</div>";
+  }
+  let t = total(current);
+  html += "<b>合計 " + Math.round(t.kcal) + " 大卡</b>（蛋白質 " + Math.round(t.protein) +
+          " g、脂肪 " + Math.round(t.fat) + " g、碳水 " + Math.round(t.carb) + " g）<br>" +
+          '份數：<input id="serving" type="number" value="1" step="0.5"> ' +
+          '<button id="add">加入今日紀錄</button>';
+  document.getElementById("aiResult").innerHTML = html;
+
+  document.getElementById("add").onclick = function () {
+    let n = parseFloat(document.getElementById("serving").value) || 1;
+    let t2 = total(current);
+    log.push({
+      name: current.map(function (x) { return x.name; }).join("、"),
+      kcal: t2.kcal * n, protein: t2.protein * n, fat: t2.fat * n, carb: t2.carb * n
+    });
+    document.getElementById("aiResult").innerHTML = "";
+    document.getElementById("preview").style.display = "none";
+    showSummary();
+  };
+}
+
+function barHTML(label, value, target, unit) {
+  let percent = target ? Math.min(100, value / target * 100) : 0;
+  let over = target && value > target ? "over" : "";
+  return label + "：" + Math.round(value) + (target ? " / " + Math.round(target) : "") + " " + unit +
+         '<div class="bar"><div class="' + over + '" style="width:' + percent + '%"></div></div>';
+}
+
+function showSummary() {
+  let logHTML = "";
+  for (let i = 0; i < log.length; i++) {
+    logHTML += '<div class="item">' + log[i].name + "：" + Math.round(log[i].kcal) + " 大卡</div>";
+  }
+  document.getElementById("log").innerHTML = logHTML || "尚未記錄餐點";
+
+  let t = total(log);
+  let g = goal || {};
+  let html = barHTML("熱量", t.kcal, g.kcal, "大卡") +
+             barHTML("碳水", t.carb, g.carb, "g") +
+             barHTML("蛋白質", t.protein, g.protein, "g") +
+             barHTML("脂肪", t.fat, g.fat, "g");
+  if (goal) {
+    html += "還可攝取約 " + Math.round(goal.kcal - t.kcal) + " 大卡";
+  }
+  document.getElementById("summary").innerHTML = html;
+}
+
+showSummary();
+</script>
+</body>
+</html>
