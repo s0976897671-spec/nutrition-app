@@ -139,7 +139,7 @@ async function analyze(file) {
       "蛋白質、脂肪、碳水單位為公克，熱量為大卡。若不是食物，items 為空陣列。";
 
     let url = "https://generativelanguage.googleapis.com/v1beta/models/" +
-              "gemini-2.5-flash:generateContent?key=" + key;
+              "gemini-3.8-flash:generateContent?key=" + key;
 
     let response = await fetch(url, {
       method: "POST",
