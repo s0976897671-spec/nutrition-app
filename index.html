@@ -44,6 +44,30 @@ Gemini 金鑰：<input id="key" type="password" placeholder="貼上你的金鑰"
 <div id="summary"></div>
 
 <script>
+  async function fetchRetry(url, options, tries) {
+  for (let i = 1; i <= tries; i++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(function () { ctrl.abort(); }, 40000);
+    try {
+      options.signal = ctrl.signal;
+      const res = await fetch(url, options);
+      clearTimeout(timer);
+      if ((res.status === 503 || res.status === 429) && i < tries) {
+        document.getElementById("status").textContent = "伺服器忙碌，第 " + i + " 次重試中…";
+        await new Promise(function (r) { setTimeout(r, 3000); });
+        continue;
+      }
+      return res;
+    } catch (e) {
+      clearTimeout(timer);
+      if (i === tries) {
+        throw new Error(e.name === "AbortError" ? "等待逾時（40 秒）" : e.message);
+      }
+      document.getElementById("status").textContent = "連線失敗，第 " + i + " 次重試中…";
+      await new Promise(function (r) { setTimeout(r, 3000); });
+    }
+  }
+}
 let goal = null;
 let current = null;
 let log = [];
