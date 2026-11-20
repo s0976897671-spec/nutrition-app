@@ -165,7 +165,7 @@ async function analyze(file) {
     let url = "https://generativelanguage.googleapis.com/v1beta/models/" +
               "gemini-3.8-flash:generateContent?key=" + key;
 
-    let response = await fetch(url, {
+    let response = await fetchRetry(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -177,7 +177,7 @@ async function analyze(file) {
         }],
         generationConfig: { responseMimeType: "application/json" }
       })
-    });
+     }, 3);
 
     let data = await response.json();
     if (!response.ok) {
